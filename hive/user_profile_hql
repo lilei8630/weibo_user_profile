@@ -1,0 +1,22 @@
+1.Hive 处理JSON的example
+set hivevar:msg={"message":"2015/12/08 09:14:4", "client": "10.108.24.253", "server": "passport.suning.com", "request": "POST /ids/needVerifyCode HTTP/1.1","server": "passport.sing.co","version":"1","timestamp":"2015-12-08T01:14:43.273Z","type":"B2C","center":"JSZC","system":"WAF","clientip":"192.168.61.4","host":"wafprdweb03","path":"/usr/local/logs/waf.error.log","redis":"192.168.24.46"};
+
+select get_json_object('${hivevar:msg}','$.server');
+
+2.将user_profile数据导入hive
+CREATE TABLE raw_user_profile_json(json string) ROW FORMAT DELIMITED FIELDS TERMINATED BY '|' STORED AS textfile;  
+load data inpath '/user/bd/weibo/user_profile/' overwrite into table raw_user_profile_json;  
+select json from raw_user_profile_json limit 10;
+
+SELECT b.* FROM raw_user_profile_json LATERAL VIEW  json_tuple(json, 'id', '昵称', '性别', '所在地','简介','标签','博客','生日','个性域名','小学','中学','大学','公司','血型','邮箱','QQ') b as user_id, nick_name, gender, address,description,tags,blog,birthday,domain,primary_school,middle_school,university,company,blood_type,email,QQ LIMIT 10;
+
+create table user_profile as SELECT b.* FROM raw_user_profile_json LATERAL VIEW  json_tuple(json, 'id', '昵称', '性别', '所在地','简介','标签','博客','生日','个性域名','小学','中学','大学','公司','血型','邮箱','QQ') b as user_id, nick_name, gender, address,description,tags,blog,birthday,domain,primary_school,middle_school,university,company,blood_type,email,QQ;
+
+create table user_id_tag_count_tags as select user_id,size(split(tags,' ')) as tag_count,split(tags,' ') as tags_list from user_profile where tags is not NULL;
+
+3.数据初步统计:
+总用户：5422757
+有标签的用户:3570902
+总标签数:18395390
+平均每个用户标签数:5.15
+
