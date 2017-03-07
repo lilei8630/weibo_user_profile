@@ -1,0 +1,21 @@
+Line代码改造
+./line -train uid_followee_sample_dense.txt -output uid_followee_sample_dense_2st.txt -binary 1 -size 128 -order 2 -negative 5 -samples 10000 -threads 40
+./pte -train uid_followee_sample.txt -train_tag_file uid_tag_sample.txt -output user_vec_1st.txt -output_tag  tag_vec_1st.txt -binary 0 -size 128 -order 1 -negative 5 -samples 10000 -threads 40
+
+g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result pte.cpp -o pte -lgsl -lm -lgslcblas -g
+
+./reconstruct -train ../data/uid_tag_sample.txt -output uid_tag_sample_dense.txt -depth 2 -k-max 1000   
+
+g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result normalize.cpp -o normalize      
+
+./normalize -input ../data/user_vec_1st.txt -output user_vec_norm_1st.txt -binary 0
+./normalize -input ../data/user_vec_2st.txt -output user_vec_norm_2st.txt -binary 0
+./normalize -input ../data/tag_vec_1st.txt -output tag_vec_norm_1st.txt -binary 0
+./normalize -input ../data/tag_vec_2st.txt -output tag_vec_norm_2st.txt -binary 0
+
+g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result concatenate.cpp -o concatenate
+./concatenate -input1 tag_vec_norm_1st.txt -input2 tag_vec_norm_2st.txt -output tag_vec_all.txt -binary 0
+./concatenate -input1 user_vec_norm_1st.txt -input2 user_vec_norm_2st.txt -output user_vec_all.txt -binary 0
+
+gcc -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result distance.c -o distance
+./distance user_vec_all.txt tag_vec_all.txt

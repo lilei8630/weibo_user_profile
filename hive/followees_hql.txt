@@ -1,0 +1,81 @@
+1.原始数据格式
+其中第一个数字为userId，其后的列表为该userId的关注用户的userId
+[1799865655, [2869347900, 1798580325, 1642055823, 2799188791, 1779720113, 1685482501, 2202311361, 1655302873, 1743363694, 1654727873, 1398082037, 2133847855, 1355610915, 1814497153, 2392016215, 1756908533, 1745503947, 1812507707, 1785751701, 1621937643, 2198790500, 1962310741, 1594779263, 1261700994, 1592911662, 2060733221, 1230663070, 1808717020, 1695247672, 1618051664, 1670071920, 1189729754, 1182389073, 1858398714, 1705586121, 1821444155, 1195403385, 1724367710, 1845653780, 1779328684, 1843152063, 1926931587, 1912236297, 1644395354, 1689369091, 1749127163, 2157486862, 1741692611, 1644492510, 1709350393, 1698229264, 1995801167, 1182391231, 1713926427, 1736708753, 2134671703, 1787542433, 1800852695, 2074537511, 1707178184, 1640601392, 1811781304, 1734741902, 1642635773, 1400992111, 1741276322, 1682243591, 1812458977, 1407988324, 1670768954, 1717871843, 1883497310, 1197161814, 1666342717, 1614282004, 1954877773, 1282005885, 1957030507, 1750223583, 2125939111, 1889588180, 2016713117, 1768541657, 1642909335, 1732950433, 1831348402]]
+
+[1799865655, []]
+
+2.目标是将上述格式的数据转化成userID，count，flowees_list
+
+3.数据预处理
+1799865655	2869347900,1798580325,...,1831348402
+
+1799865655	
+
+http://blog.csdn.net/xiaolang85/article/details/51330634
+
+sed -i -e 's/\,/\t/' -e 's/\[//g' -e 's/\]//g' followees.txt
+
+
+create table  raw_followees(user_id string,followees array<string>) 
+ROW FORMAT DELIMITED 
+FIELDS TERMINATED BY '\t'
+COLLECTION ITEMS TERMINATED BY ',';
+
+load data inpath '/user/bd/weibo/followees_10.txt' overwrite into table raw_followees;  
+
+create table not_0_followees as select user_id,size(followees) as num,followees from raw_followees where size(followees) != 1;
+
+insert overwrite local directory '/mnt/sdb1/weibo/followees'
+row format delimited
+fields terminated by '\t'
+COLLECTION ITEMS TERMINATED BY ','
+select * from followees_table;
+
+create table uid_num_followees as select uid,size(followees) as num,followees from followees_table;
+
+初步统计：
+关注关系最多的用户个数:3766
+有关注关系的用户数量:7960069
+关注人:5-1000：6918907
+      10-1000:6862724
+      100-1000:5544229
+
+将用户发微博数量表和用户关注关系表join：
+id num 关注关系
+create table id_weiboNum_floweesNum_followees as select a.uid,b.weibonum weiboNum,a.num followeesNum,a.followees from uid_num_followees a left outer join id_weibonum b on a.uid = b.id;
+
+create table user_profile_new as select cast(user_id as bigint) user_id,nick_name,gender,address,description,tags,blog,birthday,domain,primary_school,middle_school,university,company,blood_type,email,qq from user_profile where user_id is not NULL;
+
+create table id_weibonum_floweesnum_tags_followees as select a.uid,a.weibonum,a.followeesnum,b.tags,a.followees from id_weibonum_floweesnum_followees a left outer join user_profile_new b on a.uid = b.user_id;
+
+select count(*) from id_weibonum_floweesnum_tags_followees where weibonum > 200 and weibonum < 250 and followeesnum > 100 and followeesnum < 200;
+
+select uid,followee from id_weibonum_floweesnum_tags_followees_test laternal view exploid(followees) as followee;
+
+create table uid_followee_sample as select uid,followee,1 from id_weibonum_floweesnum_tags_followees lateral view explode(followees) mytable as followee where weibonum > 200 and weibonum < 250 and followeesnum > 50 and followeesnum < 200;
+
+create table uid_sample as select uid from uid_followee_sample;
+
+insert into table uid_sample select followee as uid from uid_followee_sample;
+
+create table uid_distinct_sample as select distinct(uid) uid from uid_sample;
+
+insert overwrite directory '/user/bd/uid_followee_sample' row format delimited fields terminated by '\t' select * from uid_followee_sample;
+
+create table uid_tags as select a.uid,b.tags from uid_distinct_sample a left outer join id_weibonum_floweesnum_tags_followees b on a.uid = b.uid;
+
+create table uid_tag_sample as select uid,tag,1 from uid_tags lateral view explode(split(tags," ")) mytable as tag where tags is not NULL;
+
+insert overwrite directory '/user/bd/uid_tag_sample' row format delimited fields terminated by '\t' select * from uid_tag_sample where trim(tag)!="";
+
+./reconstruct -train /home/bd/LINE/data/uid_followee_sample.txt -output uid_followee_sample_dense.txt -depth 2 -k-max 1000
+
+./reconstruct -train /home/bd/LINE/data/uid_tag_sample.txt -output uid_tag_sample_dense.txt -depth 2 -k-max 1000
+
+
+
+
+
+
+
+
