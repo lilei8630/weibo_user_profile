@@ -1,6 +1,6 @@
 Line代码改造
 ./line -train uid_followee_sample_dense.txt -output uid_followee_sample_dense_2st.txt -binary 1 -size 128 -order 2 -negative 5 -samples 10000 -threads 40
-./pte -train uid_followee_sample.txt -train_tag_file uid_tag_sample.txt -output user_vec_1st.txt -output_tag  tag_vec_1st.txt -binary 0 -size 128 -order 1 -negative 5 -samples 10000 -threads 40
+./pte -train ../data/uid_followee_sample.txt -train_tag_file ../data/uid_tag_sample.txt -output user_vec_1st.txt -output_tag  tag_vec_1st.txt -binary 0 -size 128 -order 1 -negative 5 -samples 10000 -threads 40
 
 g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result pte.cpp -o pte -lgsl -lm -lgslcblas -g
 
@@ -19,3 +19,34 @@ g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unus
 
 gcc -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result distance.c -o distance
 ./distance user_vec_all.txt tag_vec_all.txt
+
+
+------------------------训练pte-------------------------------------------------
+1.利用Line一阶计算用户和标签的向量表示
+./pte -train ../data/uid_followee_sample_20.txt -train_tag_file ../data/uid_tag_sample.txt -output user_vec_1st.txt -output_tag  tag_vec_1st.txt -binary 0 -size 128 -order 1 -negative 5 -samples 10000 -threads 40
+
+2.利用Line二阶计算用户和标签的向量表示
+./pte -train ../data/uid_followee_sample.txt -train_tag_file ../data/uid_tag_sample.txt -output user_vec_2st.txt -output_tag  tag_vec_2st.txt -binary 0 -size 128 -order 2 -negative 5 -samples 10000 -threads 40
+
+3.归一化各个结果
+./normalize -input ../data/user_vec_1st.txt -output user_vec_norm_1st.txt -binary 0
+./normalize -input ../data/user_vec_2st.txt -output user_vec_norm_2st.txt -binary 0
+./normalize -input ../data/tag_vec_1st.txt -output tag_vec_norm_1st.txt -binary 0
+./normalize -input ../data/tag_vec_2st.txt -output tag_vec_norm_2st.txt -binary 0
+
+4.将一阶结果和二阶结果合并
+./concatenate -input1 tag_vec_norm_1st.txt -input2 tag_vec_norm_2st.txt -output tag_vec_all.txt -binary 0
+./concatenate -input1 user_vec_norm_1st.txt -input2 user_vec_norm_2st.txt -output user_vec_all.txt -binary 0
+
+5.findSim编译
+gcc -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result findSim.c -o findSim
+./findSim user_vec_all.txt tag_vec_all.txt uid_tags_predicTags_top5.txt uid_tags_predicTags_top5_pte.txt 5
+
+-------------------------修改负采样方法----------------------------------------------
+1.先训练后优化
+g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result pte-tune.cpp -o pte-tune -lgsl -lm -lgslcblas -g
+2.联合训练
+g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result pte-joint.cpp -o pte-joint -lgsl -lm -lgslcblas -g
+
+
+

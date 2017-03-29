@@ -26,16 +26,11 @@ typedef float real;                    // Precision of float numbers
 
 struct ClassVertex {
 	double degree;
+	double degree_tag; //由于异构网络degree的计算方式不同，所以degree用来记录用户关系网络，degree_tag用于计算用户标签网络。
 	char *name;
 	int type;  //0:user or 1:tag
 	int source; // 0:来源于用户关系网络，1：来源于用户标签网络 2：来源于两者，添加这个标记是为了对两类集合做负采样
 };
-
-struct trainParam   
-{   
-    int thread_id;  
-    char * thread_name; //tag or untag   
-}; 
 
 char network_file[MAX_STRING], embedding_file[MAX_STRING],tag_file[MAX_STRING],embedding_tag_file[MAX_STRING];
 struct ClassVertex *vertex;
@@ -103,6 +98,7 @@ int AddVertex(char *name,int type,int source)
     vertex[num_vertices].source = source;
 	strcpy(vertex[num_vertices].name, name);
 	vertex[num_vertices].degree = 0;
+	vertex[num_vertices].degree_tag = 0;
 	num_vertices++;
 	if (num_vertices + 2 >= max_num_vertices)
 	{
@@ -208,14 +204,14 @@ void ReadData()
 		{
 			vertex[vid].source = 2;
 		}
-		vertex[vid].degree += weight;
+		vertex[vid].degree_tag += weight;
 		edge_source_id[k] = vid;
 
 		vid = SearchHashTable(name_v2);
 		if (vid == -1) {
 			vid = AddVertex(name_v2,1,1);
 		}
-		vertex[vid].degree += weight;
+		vertex[vid].degree_tag += weight;
 		edge_target_id[k] = vid;
 
 		edge_weight[k] = weight;
@@ -392,7 +388,7 @@ void InitNegTable()
 	}
 
 	for (int k = 0; k != cnt_relation; k++) sum_relation += pow(vertex[relationArray[k]].degree, NEG_SAMPLING_POWER);
-	for (int k = 0; k != cnt_tag; k++) sum_tag += pow(vertex[tagArray[k]].degree, NEG_SAMPLING_POWER);
+	for (int k = 0; k != cnt_tag; k++) sum_tag += pow(vertex[tagArray[k]].degree_tag, NEG_SAMPLING_POWER);
 
 	for (int k = 0; k != neg_table_size; k++)
 	{
@@ -410,7 +406,7 @@ void InitNegTable()
 	{
 		if ((double)(k + 1) / neg_table_size > por)
 		{
-			cur_sum += pow(vertex[tagArray[vid]].degree, NEG_SAMPLING_POWER);
+			cur_sum += pow(vertex[tagArray[vid]].degree_tag, NEG_SAMPLING_POWER);
 			por = cur_sum / sum_tag;
 			vid++;
 		}
@@ -456,12 +452,9 @@ void Update(real *vec_u, real *vec_v, real *vec_error, int label)
 	for (int c = 0; c != dim; c++) vec_v[c] += g * vec_u[c];
 }
 
-void *TrainLINEThread(void *arg)
+void *TrainLINEThread(void *id)
 {
-	struct trainParam *para;  
-    para = (struct trainParam *)arg;  
-    int id = (*para).thread_id;
-    char * name = (*para).thread_name;
+	
 	long long u, v, lu, lv, target, label;
 	long long count = 0, last_count = 0, curedge;
 	unsigned long long seed = (long long)id;
@@ -476,23 +469,20 @@ void *TrainLINEThread(void *arg)
 		{
 			current_sample_count += count - last_count;
 			last_count = count;
-			printf("%cRho: %f  Progress: %.3lf%%", 13, rho, (real)current_sample_count / (real)(total_samples*2 + 1) * 100);
+			printf("%cRho: %f  Progress: %.3lf%%", 13, rho, (real)current_sample_count / (real)(total_samples + 1) * 100);
 			fflush(stdout);
 			rho = init_rho * (1 - current_sample_count / (real)(total_samples + 1));
 			if (rho < init_rho * 0.0001) rho = init_rho * 0.0001;
 		}
 
-		if(strcmp(name,"untag")==0)
-			curedge = SampleAnEdge(gsl_rng_uniform(gsl_r), gsl_rng_uniform(gsl_r));
-		else
-			curedge = SampleAnTagEdge(gsl_rng_uniform(gsl_r), gsl_rng_uniform(gsl_r));
+		//------------------先训练用户关系网络-------------------------------
+		curedge = SampleAnEdge(gsl_rng_uniform(gsl_r), gsl_rng_uniform(gsl_r));
 
 		u = edge_source_id[curedge];
 		v = edge_target_id[curedge];
 
 		lu = u * dim;
 		for (int c = 0; c != dim; c++) vec_error[c] = 0;
-
 		// NEGATIVE SAMPLING
 		for (int d = 0; d != num_negative + 1; d++)
 		{
@@ -503,14 +493,8 @@ void *TrainLINEThread(void *arg)
 			}
 			else
 			{
-				if(strcmp(name,"untag")==0){
-					target = neg_table[Rand(seed)];
-					label = 0;
-				}
-				else{
-					target = neg_table_tag[Rand(seed)];
-					label = 0;
-				}
+				target = neg_table[Rand(seed)];
+				label = 0;	
 			}
 			lv = target * dim;
 			if (order == 1) Update(&emb_vertex[lu], &emb_vertex[lv], vec_error, label);
@@ -518,6 +502,31 @@ void *TrainLINEThread(void *arg)
 		}
 		for (int c = 0; c != dim; c++) emb_vertex[c + lu] += vec_error[c];
 
+		//------------------再训练用户标签网络-------------------------------
+		curedge = SampleAnTagEdge(gsl_rng_uniform(gsl_r), gsl_rng_uniform(gsl_r));
+		u = edge_source_id[curedge];
+		v = edge_target_id[curedge];
+
+		lu = u * dim;
+		for (int c = 0; c != dim; c++) vec_error[c] = 0;
+		// NEGATIVE SAMPLING
+		for (int d = 0; d != num_negative + 1; d++)
+		{
+			if (d == 0)
+			{
+				target = v;
+				label = 1;
+			}
+			else
+			{	
+				target = neg_table_tag[Rand(seed)];
+				label = 0;	
+			}
+			lv = target * dim;
+			if (order == 1) Update(&emb_vertex[lu], &emb_vertex[lv], vec_error, label);
+			if (order == 2) Update(&emb_vertex[lu], &emb_context[lv], vec_error, label);
+		}
+		for (int c = 0; c != dim; c++) emb_vertex[c + lu] += vec_error[c];
 		count++;
 	}
 	free(vec_error);
@@ -605,22 +614,10 @@ void TrainLINE() {
 	clock_t start = clock();
 	printf("--------------------------------\n");
 	for (a = 0; a < num_threads; a++) 
-	{
-		struct trainParam para;  
-    	para.thread_id = a;  
-        para.thread_name=(char *)"untag";  
-		pthread_create(&pt[a], NULL, TrainLINEThread, &para);
-	}
+		pthread_create(&pt[a], NULL, TrainLINEThread, (void *)a);
+	
 	for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
 
-	for (a = 0; a < num_threads; a++) 
-	{
-		struct trainParam para;  
-    	para.thread_id = a;  
-        para.thread_name = (char *)"tag";  
-		pthread_create(&pt[a], NULL, TrainLINEThread, &para);
-	}
-	for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
 	printf("\n");
 	clock_t finish = clock();
 	printf("Total time: %lf\n", (double)(finish - start) / CLOCKS_PER_SEC);

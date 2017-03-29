@@ -26,6 +26,7 @@ typedef float real;                    // Precision of float numbers
 
 struct ClassVertex {
 	double degree;
+	double degree_tag; //由于异构网络degree的计算方式不同，所以degree用来记录用户关系网络，degree_tag用于计算用户标签网络。
 	char *name;
 	int type;  //0:user or 1:tag
 	int source; // 0:来源于用户关系网络，1：来源于用户标签网络 2：来源于两者，添加这个标记是为了对两类集合做负采样
@@ -103,6 +104,7 @@ int AddVertex(char *name,int type,int source)
     vertex[num_vertices].source = source;
 	strcpy(vertex[num_vertices].name, name);
 	vertex[num_vertices].degree = 0;
+	vertex[num_vertices].degree_tag = 0;
 	num_vertices++;
 	if (num_vertices + 2 >= max_num_vertices)
 	{
@@ -208,14 +210,14 @@ void ReadData()
 		{
 			vertex[vid].source = 2;
 		}
-		vertex[vid].degree += weight;
+		vertex[vid].degree_tag += weight;
 		edge_source_id[k] = vid;
 
 		vid = SearchHashTable(name_v2);
 		if (vid == -1) {
 			vid = AddVertex(name_v2,1,1);
 		}
-		vertex[vid].degree += weight;
+		vertex[vid].degree_tag += weight;
 		edge_target_id[k] = vid;
 
 		edge_weight[k] = weight;
@@ -392,7 +394,7 @@ void InitNegTable()
 	}
 
 	for (int k = 0; k != cnt_relation; k++) sum_relation += pow(vertex[relationArray[k]].degree, NEG_SAMPLING_POWER);
-	for (int k = 0; k != cnt_tag; k++) sum_tag += pow(vertex[tagArray[k]].degree, NEG_SAMPLING_POWER);
+	for (int k = 0; k != cnt_tag; k++) sum_tag += pow(vertex[tagArray[k]].degree_tag, NEG_SAMPLING_POWER);
 
 	for (int k = 0; k != neg_table_size; k++)
 	{
@@ -410,7 +412,7 @@ void InitNegTable()
 	{
 		if ((double)(k + 1) / neg_table_size > por)
 		{
-			cur_sum += pow(vertex[tagArray[vid]].degree, NEG_SAMPLING_POWER);
+			cur_sum += pow(vertex[tagArray[vid]].degree_tag, NEG_SAMPLING_POWER);
 			por = cur_sum / sum_tag;
 			vid++;
 		}

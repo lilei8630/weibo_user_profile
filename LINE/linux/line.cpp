@@ -1,18 +1,3 @@
-/*
-This is the tool ....
-
-Contact Author: Jian Tang, Microsoft Research, jiatang@microsoft.com, tangjianpku@gmail.com
-Publication: Jian Tang, Meng Qu, Mingzhe Wang, Ming Zhang, Jun Yan, Qiaozhu Mei. "LINE: Large-scale Information Network Embedding". In WWW 2015.
-*/
-
-// Format of the training file:
-//
-// The training file contains serveral lines, each line represents a DIRECTED edge in the network.
-// More specifically, each line has the following format "<u> <v> <w>", meaning an edge from <u> to <v> with weight as <w>.
-// <u> <v> and <w> are seperated by ' ' or '\t' (blank or tab)
-// For UNDIRECTED edge, the user should use two DIRECTED edges to represent it.
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

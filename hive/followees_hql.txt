@@ -64,13 +64,350 @@ insert overwrite directory '/user/bd/uid_followee_sample' row format delimited f
 
 create table uid_tags as select a.uid,b.tags from uid_distinct_sample a left outer join id_weibonum_floweesnum_tags_followees b on a.uid = b.uid;
 
-create table uid_tag_sample as select uid,tag,1 from uid_tags lateral view explode(split(tags," ")) mytable as tag where tags is not NULL;
+create table uid_tag_sample as select uid,tag,1 from uid_tags_train_set lateral view explode(split(tags," ")) mytable as tag where tags is not NULL;
 
 insert overwrite directory '/user/bd/uid_tag_sample' row format delimited fields terminated by '\t' select * from uid_tag_sample where trim(tag)!="";
 
 ./reconstruct -train /home/bd/LINE/data/uid_followee_sample.txt -output uid_followee_sample_dense.txt -depth 2 -k-max 1000
 
 ./reconstruct -train /home/bd/LINE/data/uid_tag_sample.txt -output uid_tag_sample_dense.txt -depth 2 -k-max 1000
+
+
+
+----------------------找隐含的tag----------------------------
+1、把分词后的数据导入到hdfs
+hadoop fs -put 1_uid_token.txt /user/bd/weibo_token
+hadoop fs -put 2_uid_token.txt /user/bd/weibo_token
+hadoop fs -put 3_uid_token.txt /user/bd/weibo_token
+hadoop fs -put 4_uid_token.txt /user/bd/weibo_token
+hadoop fs -put 5_uid_token.txt /user/bd/weibo_token
+hadoop fs -put 6_uid_token.txt /user/bd/weibo_token
+hadoop fs -put stopwords.txt /user/bd/
+
+
+2、
+create table  uid_tokens(user_id string,tokens array<string>) 
+ROW FORMAT DELIMITED 
+FIELDS TERMINATED BY '\t'
+COLLECTION ITEMS TERMINATED BY ' ';
+
+create table stopwords(stopword string) 
+ROW FORMAT DELIMITED 
+FIELDS TERMINATED BY '\t'
+COLLECTION ITEMS TERMINATED BY ' ';
+
+3.
+load data inpath '/user/bd/weibo_token/*' overwrite into table uid_tokens; 
+load data inpath '/user/bd/stopwords.txt' overwrite into table stopwords;  
+
+
+4.先过滤需要研究的用户,需要uid_tokens和uid_tags_train_set
+
+create table uid_tokens_new as select cast(user_id as bigint) user_id,followees as tokens from uid_tokens where user_id is not NULL;
+
+create table uid_tokens_sample as select * from uid_tokens_new where user_id in (select uid from uid_tags_train_set);
+
+5.将tokens行转列
+create table uid_token as select user_id,token from uid_tokens_sample lateral view explode(tokens) mytable as token where token is not NULL;
+
+6.按照uid、token分组，并统计组内个数
+create table uid_token_num as select user_id,token,count(*) from uid_token group by user_id,token;
+
+7.从uid_tag_sample中找出所有不同的tag
+create table tags as select distinct(tag) as tag from uid_tag_sample;
+
+8.找出是tag的token
+create table uid_token_num_filtered_by_tags as select user_id,token,`_c2` num from uid_token_num where token in (select tag from tags);
+
+9.对uid_token_num_filtered_by_tags和uid_tag_sample过滤停用词
+
+create table uid_tag_sample_rm_stwords as select * from uid_tag_sample where tag not in (select stopword from stopwords);
+
+create table uid_token_num_filtered_rm_stwords as select * from uid_token_num_filtered_by_tags where token not in (select stopword from stopwords);
+
+10.隐含tag的数量
+select count(*) from uid_token_num_filtered_rm_stwords where num > 20 and num < 100 and length(token) > 1;
+
+11.生成隐含tag的目标结果
+create table uid_token_sample_0_0_1 as select user_id,token, round(num * 0.01,2) as weight from uid_token_num_filtered_rm_stwords where num > 20 and num < 100 and length(token) > 1;
+
+create table uid_token_sample_0_0_0_5 as select user_id,token, round(num * 0.005,2) as weight from uid_token_num_filtered_rm_stwords where num > 20 and num < 100 and length(token) > 1;
+
+12.生成直接tag的目标结果
+create table uid_tag_sample_direct as select uid,tag, `_c2` as weight from uid_tag_sample_rm_stwords where length(tag) > 1;
+
+13.导出结果
+insert overwrite directory '/user/bd/uid_token_sample_0_0_1' row format delimited fields terminated by '\t' select * from uid_token_sample_0_0_1;
+
+insert overwrite directory '/user/bd/uid_token_sample_0_0_0_5' row format delimited fields terminated by '\t' select * from uid_token_sample_0_0_0_5;
+
+insert overwrite directory '/user/bd/uid_tag_sample_direct' row format delimited fields terminated by '\t' select * from uid_tag_sample_direct;
+
+-----------------------找at关系-------------------------------------------------
+1.创建外部表
+create external table at_relation(uidA bigint,uidB bigint,num int) 
+ROW FORMAT DELIMITED 
+FIELDS TERMINATED BY '\t'
+COLLECTION ITEMS TERMINATED BY ',';
+2.数据备份到hdfs
+hadoop fs -put /home/bd/LINE/data/at_relation_sort.txt /user/bd
+3.向hive中导入数据
+load data inpath '/user/bd/at_relation_sort.txt' overwrite into table at_relation;  
+
+
+----------------------将带标签用户分为训练集和测试集--------------------------------
+1.uid_tags为样本用户的标签集合，如果没有标签的话，标签为NULL,通过下面得到测试集合uid_tags_test_set
+
+create table uid_tags_test_set as select * from uid_tags where tags is not NULL order by rand(12312323) limit 50000;
+
+2.测试集和训练集的并集
+create table uid_tags_all_set as select * from uid_tags where tags is not NULL;
+
+3.训练集
+create table uid_tags_train_set as select * from uid_tags_all_set where uid not in (select uid from uid_tags_test_set); 
+
+create table uid_tag_sample as select uid,tag,1 from uid_tags_train_set lateral view explode(split(tags," ")) mytable as tag where tags is not NULL;
+
+insert overwrite directory '/user/bd/uid_tag_sample' row format delimited fields terminated by '\t' select * from uid_tag_sample where trim(tag)!="";
+
+----------------------计算ground truth-------------------------------------------
+1.涉及user_profile_new、uid_tags_test_set、id_weibonum_floweesnum_followees
+  把uid_tags_test_set和id_weibonum_floweesnum_followees取join
+  create table uid_tags_followees_test as select a.uid,a.tags,b.followees from uid_tags_test_set a left outer join id_weibonum_floweesnum_followees b on a.uid = b.uid;
+
+2.把uid_tags_followees_test的followees行转列
+  create table uid_tags_uid2_test as select uid,tags,uid2 from uid_tags_followees_test lateral view explode(followees) mytable as uid2;
+
+3.利用uid_tags_uid2_test和user_profile_new来join，并取得uid2对应的tags
+  create table uid_tags_uid2_tags2_test as select a.uid,a.tags,a.uid2,b.tags tags2 from uid_tags_uid2_test a left outer join user_profile_new b on a.uid2 = b.user_id;
+
+4.去掉uid2 = 0的异常数据
+  create table uid_tags_uid2_tags2_test_new as select * from uid_tags_uid2_tags2_test where uid2 != 0;
+
+5.将tags2行转列
+  create table uid_tags_uid2_tag as select uid,tags,uid2,tag from uid_tags_uid2_tags2_test_new lateral view explode(split(tags2," ")) mytable  as tag where tag is not NULL;
+
+6.对uid_tags_uid2_tag根据uid和tag进行分组并统计每组的个数
+  create table uid_tags_uid2List_tag_num as select uid,tags,collect_set(uid2) as uid2List,tag,count(tag) as num from uid_tags_uid2_tag group by uid,tag,tags;
+
+7.对uid_tags_uid2List_tag_num按照uid分组，并按照order降序排列，后取得前5个tag(存在并列组号)
+  create table uid_tags_tag_num_rank_top5 as select uid,tags,tag,num,rank from (select uid, tags, tag,num, row_number() over ( partition by uid order by num desc) as rank from uid_tags_uid2List_tag_num ) t where rank < 6;
+
+8.将top5的结果列转行生成ground_truth_5（存在并列组号）
+  create table uid_tags_predicTags_top5  as select uid,tags,collect_set(tag) as predictList from uid_tags_tag_num_rank_top5 group by uid,tags; 
+
+9.对uid_tags_uid2List_tag_num按照uid分组，并按照order降序排列，后取得前5个tag(不存在并列组号)
+  create table uid_tags_tag_num_row_num_top5 as select uid,tags,tag,num,rank from (select uid, tags, tag,num, row_number() over ( partition by uid order by num desc) as rank from uid_tags_uid2List_tag_num ) t where rank < 6;
+
+  create table uid_tags_tag_num_row_num_top10 as select uid,tags,tag,num,rank from (select uid, tags, tag,num, row_number() over ( partition by uid order by num desc) as rank from uid_tags_uid2List_tag_num ) t where rank < 11;
+
+  create table uid_tags_tag_num_row_num_top20 as select uid,tags,tag,num,rank from (select uid, tags, tag,num, row_number() over ( partition by uid order by num desc) as rank from uid_tags_uid2List_tag_num ) t where rank < 21;
+
+  create table uid_tags_tag_num_row_num_top40 as select uid,tags,tag,num,rank from (select uid, tags, tag,num, row_number() over ( partition by uid order by num desc) as rank from uid_tags_uid2List_tag_num ) t where rank < 41;
+
+
+10.将top5的结果列转行生成ground_truth_5（不存在并列组号）
+  create table uid_tags_predicTags_top5_row  as select uid,tags,collect_set(tag) as predictList from uid_tags_tag_num_row_num_top5 group by uid,tags; 
+
+  create table uid_tags_predicTags_top10_row  as select uid,tags,collect_set(tag) as predictList from uid_tags_tag_num_row_num_top10 group by uid,tags; 
+
+  create table uid_tags_predicTags_top20_row  as select uid,tags,collect_set(tag) as predictList from uid_tags_tag_num_row_num_top20 group by uid,tags; 
+
+  create table uid_tags_predicTags_top40_row  as select uid,tags,collect_set(tag) as predictList from uid_tags_tag_num_row_num_top40 group by uid,tags; 
+
+11.将uid_tags_predicTags_top5_row结果输出(12.74%)
+insert overwrite directory '/user/bd/uid_tags_predicTags_top5' row format delimited fields terminated by '\t' COLLECTION ITEMS TERMINATED BY ' ' select * from uid_tags_predicTags_top5_row;
+
+  将uid_tags_predicTags_top10_row结果输出(15.67%)
+insert overwrite directory '/user/bd/uid_tags_predicTags_top10' row format delimited fields terminated by '\t' COLLECTION ITEMS TERMINATED BY ' ' select * from uid_tags_predicTags_top10_row;
+
+ 将uid_tags_predicTags_top20_row结果输出(17.71%)
+insert overwrite directory '/user/bd/uid_tags_predicTags_top20' row format delimited fields terminated by '\t' COLLECTION ITEMS TERMINATED BY ' ' select * from uid_tags_predicTags_top20_row;
+
+将uid_tags_predicTags_top40_row结果输出(18.89%)
+insert overwrite directory '/user/bd/uid_tags_predicTags_top40' row format delimited fields terminated by '\t' COLLECTION ITEMS TERMINATED BY ' ' select * from uid_tags_predicTags_top40_row;
+
+---------------计算pte的准确率(除去5W测试数据外都是训练数据)----------------------
+1.判断测试集uid_tags_test_set中是否所有用户都在uid_distinct_sample表中
+select count(*) from uid_tags_test_set where uid not in (select uid from uid_distinct_sample);
+由于结果为0，所以表明测试集中的所有用户均可用pte方法进行预测
+2.uid_tags_predicTags_top5_pte.txt的准确率为0.14%
+
+
+
+
+
+
+
+
+------------------------对tag进行清洗，提高准确率---------------------------------
+需要的数据有uid_tags_train_set,uid_tag_sample两个表
+
+1.计算每个tag的词频
+create table tag_num as select tag,count(*) as num from uid_tag_sample group by tag;
+
+2.选出词频大于20的tag作为备选tag,共15561.
+create table tag_num_20 as select tag,num from tag_num where num > 20;
+  选出词频大于15的tag作为备选tag,共20305.
+create table tag_num_15 as select tag,num from tag_num where num > 15;
+  选出词频大于10的tag作为备选tag,共29103.
+create table tag_num_10 as select tag,num from tag_num where num > 10;
+
+3.按照tag_num_20对uid_tag_sample进行清洗,并导出。
+
+create table uid_tag_sample_20 as select uid,tag,1 weight from uid_tag_sample where tag in (select tag from tag_num_20);
+
+insert overwrite directory '/user/bd/uid_tag_sample_20' row format delimited fields terminated by '\t' select * from uid_tag_sample_20 where trim(tag)!="";
+
+
+
+4.迭代次数100000M:top5:7.4258295E-4
+                 top10:9.0391317E-4
+                 top20:0.0010407555
+                 top40:0.0011733873
+
+5.只考虑一阶：
+          top5: 0.008452911
+          top10:0.009621175
+          top20:0.010469124
+          top40:0.011071548
+
+
+6.只考虑二阶：top5:3.5195332E-4
+            top10:4.517364E-4
+            top20:5.5384723E-4
+            top40:6.5028935E-4
+7.一阶和二阶均考虑为 top5:0.24%
+                 top10: 0.29%
+                 top20:0.33%
+                 top40:0.36%
+
+---------------------------------出现词频高的词设置高权重进行优化(权重为词频)------------------------------------
+
+1.涉及到的表有tag_num，uid_tag_sample 按照tag做join
+create table uid_tag_freq as select a.uid,a.tag,b.num from uid_tag_sample a left outer join tag_num b on a.tag = b.tag; 
+2.将uid_tag_freq 进行导出
+insert overwrite directory '/user/bd/uid_tag_freq' row format delimited fields terminated by '\t' select * from uid_tag_freq where trim(tag)!="";
+
+3. 一阶和二阶均考虑为(训练10000M) top5:3.4445466E-4
+                               top10: 3.862824E-4
+                               top20:4.1775263E-4
+                               top40:4.465575E-4
+   一阶和二阶均考虑为(训练5000M,一阶100维度，二阶50维)  top5:3.75687E-4  0.000375687
+                                                  top10: 4.1611947E-4
+                                                  top20:4.5139802E-4
+                                                  top40:4.8349125E-4      
+
+----------------------------------------优化负采样算法---------------------------------                   
+
+1.一阶和二阶均考虑为(训练5000M,一阶100维度，二阶50维)  
+top5: 0.0041533536
+top10:0.004636838
+top20:0.004981038
+top40:0.0052422304
+
+2.一阶和二阶均考虑为(训练5000M,一阶100维度，二阶50维),将异构图的degree分离计算，tune方式
+top5: 0.0027796808
+top10:0.0030401954
+top20:0.004981038
+top40:0.0052422304
+
+3.一阶和二阶均考虑为(训练5000M,一阶100维度，二阶50维),将异构图的degree分离计算，joint方式
+top5: 3.9870312E-4
+top10:0.004636838
+top20:0.004981038
+top40:0.0052422304
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+----------------------------------------------------------
+目前有两个问题：
+1.微博转发文本，没有转发来自谁。所以不能用来扩充用户关系网络，我打算用微博@关系来扩充关系网络。
+
+2.结果验证的方法:
+  总的方向：将有标签的用户分为训练集和测试集，通过PTE训练得到所有用户标签，然后计算准确率、召回率
+           来验证是否比单独训练用户网络和标签网络的预测结果好，然后在以下4个数据集上验证这一结论
+  1）利用未拓展的用户关系、未拓展的标签网络计算准确率、召回率
+  2）利用拓展的用户关系、未拓展的标签网络计算准确率、召回率
+  3）利用未拓展的用户关系、拓展的标签网络计算准确率、召回率
+  4）利用拓展的用户关系、拓展的标签网络计算准确率、召回率
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
