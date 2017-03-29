@@ -237,9 +237,6 @@ select count(*) from uid_tags_test_set where uid not in (select uid from uid_dis
 
 
 
-
-
-
 ------------------------对tag进行清洗，提高准确率---------------------------------
 需要的数据有uid_tags_train_set,uid_tag_sample两个表
 
@@ -258,7 +255,6 @@ create table tag_num_10 as select tag,num from tag_num where num > 10;
 create table uid_tag_sample_20 as select uid,tag,1 weight from uid_tag_sample where tag in (select tag from tag_num_20);
 
 insert overwrite directory '/user/bd/uid_tag_sample_20' row format delimited fields terminated by '\t' select * from uid_tag_sample_20 where trim(tag)!="";
-
 
 
 4.迭代次数100000M:top5:7.4258295E-4
@@ -309,14 +305,20 @@ top40:0.0052422304
 2.一阶和二阶均考虑为(训练5000M,一阶100维度，二阶50维),将异构图的degree分离计算，tune方式
 top5: 0.0027796808
 top10:0.0030401954
-top20:0.004981038
-top40:0.0052422304
+top20:0.003239623
+top40:0.003376254
 
 3.一阶和二阶均考虑为(训练5000M,一阶100维度，二阶50维),将异构图的degree分离计算，joint方式
 top5: 3.9870312E-4
-top10:0.004636838
-top20:0.004981038
-top40:0.0052422304
+top10:4.748699E-4
+top20:5.3828466E-4
+top40:6.1055075E-4
+
+4.负采样算法优化后+tag权重都是1+过滤词频低于20的tag+100+50
+top5: 0.0101237735
+top10:0.012944515
+top20:0.01589209
+top40:0.018974675
 
 
 
