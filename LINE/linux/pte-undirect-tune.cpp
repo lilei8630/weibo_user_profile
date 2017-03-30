@@ -36,6 +36,7 @@ struct trainParam
 {   
     int thread_id;  
     char * thread_name; //tag or untag   
+    int method;         // 0:source -> target 1:target->source
 }; 
 
 char network_file[MAX_STRING], embedding_file[MAX_STRING],tag_file[MAX_STRING],embedding_tag_file[MAX_STRING];
@@ -463,6 +464,7 @@ void *TrainLINEThread(void *arg)
 	struct trainParam *para;  
     para = (struct trainParam *)arg;  
     int id = (*para).thread_id;
+    int method = (*para).method;
     char * name = (*para).thread_name;
 	long long u, v, lu, lv, target, label;
 	long long count = 0, last_count = 0, curedge;
@@ -478,7 +480,7 @@ void *TrainLINEThread(void *arg)
 		{
 			current_sample_count += count - last_count;
 			last_count = count;
-			printf("%cRho: %f  Progress: %.3lf%%", 13, rho, (real)current_sample_count / (real)(total_samples*2 + 1) * 100);
+			printf("%cRho: %f  Progress: %.3lf%%", 13, rho, (real)current_sample_count / (real)(total_samples*4 + 1) * 100);
 			fflush(stdout);
 			rho = init_rho * (1 - current_sample_count / (real)(total_samples + 1));
 			if (rho < init_rho * 0.0001) rho = init_rho * 0.0001;
@@ -489,42 +491,15 @@ void *TrainLINEThread(void *arg)
 		else
 			curedge = SampleAnTagEdge(gsl_rng_uniform(gsl_r), gsl_rng_uniform(gsl_r));
 
-		//无向图一条边要训练两次，正向一次，反向一次
-		// ----------------正向--------------------
-		u = edge_source_id[curedge];
-		v = edge_target_id[curedge];
-
-		lu = u * dim;
-		for (int c = 0; c != dim; c++) vec_error[c] = 0;
-
-		// NEGATIVE SAMPLING
-		for (int d = 0; d != num_negative + 1; d++)
+		if (method == 0)//source -> method
 		{
-			if (d == 0)
-			{
-				target = v;
-				label = 1;
-			}
-			else
-			{
-				if(strcmp(name,"untag")==0){
-					target = neg_table[Rand(seed)];
-					label = 0;
-				}
-				else{
-					target = neg_table_tag[Rand(seed)];
-					label = 0;
-				}
-			}
-			lv = target * dim;
-			if (order == 1) Update(&emb_vertex[lu], &emb_vertex[lv], vec_error, label);
-			if (order == 2) Update(&emb_vertex[lu], &emb_context[lv], vec_error, label);
+			u = edge_source_id[curedge];
+		    v = edge_target_id[curedge];
+		}else{
+			u = edge_target_id[curedge];
+		    v = edge_source_id[curedge];
 		}
-		for (int c = 0; c != dim; c++) emb_vertex[c + lu] += vec_error[c];
-			
-		// ----------------反向--------------------
-		u = edge_target_id[curedge];
-		v = edge_source_id[curedge];
+		
 
 		lu = u * dim;
 		for (int c = 0; c != dim; c++) vec_error[c] = 0;
@@ -645,6 +620,17 @@ void TrainLINE() {
 		struct trainParam para;  
     	para.thread_id = a;  
         para.thread_name=(char *)"untag";  
+        para.method = 0;  //source -> target
+		pthread_create(&pt[a], NULL, TrainLINEThread, &para);
+	}
+	for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
+
+	for (a = 0; a < num_threads; a++) 
+	{
+		struct trainParam para;  
+    	para.thread_id = a;  
+        para.thread_name=(char *)"untag";  
+        para.method = 1;  //target -> source
 		pthread_create(&pt[a], NULL, TrainLINEThread, &para);
 	}
 	for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
@@ -654,6 +640,17 @@ void TrainLINE() {
 		struct trainParam para;  
     	para.thread_id = a;  
         para.thread_name = (char *)"tag";  
+        para.method = 0;  //source -> target
+		pthread_create(&pt[a], NULL, TrainLINEThread, &para);
+	}
+	for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
+
+	for (a = 0; a < num_threads; a++) 
+	{
+		struct trainParam para;  
+    	para.thread_id = a;  
+        para.thread_name = (char *)"tag";  
+        para.method = 1; //target -> source
 		pthread_create(&pt[a], NULL, TrainLINEThread, &para);
 	}
 	for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);

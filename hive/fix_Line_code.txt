@@ -48,7 +48,7 @@ g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unus
 2.联合训练
 g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result pte-joint.cpp -o pte-joint -lgsl -lm -lgslcblas -g
 3.双向图先训练后优化
-g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result pte-undirect.cpp -o pte-undirect -lgsl -lm -lgslcblas -g
+g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result pte-undirect-tune.cpp -o pte-undirect-tune -lgsl -lm -lgslcblas -g
 4.双向图联合训练
 g++ -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result pte-undirect-joint.cpp -o pte-undirect-joint -lgsl -lm -lgslcblas -g
 
