@@ -152,7 +152,13 @@ COLLECTION ITEMS TERMINATED BY ',';
 2.数据备份到hdfs
 hadoop fs -put /home/bd/LINE/data/at_relation_sort.txt /user/bd
 3.向hive中导入数据
-load data inpath '/user/bd/at_relation_sort.txt' overwrite into table at_relation;  
+load data inpath '/user/bd/at_relation_sort.txt' overwrite into table at_relation;
+
+4. 对at_relation的uida的边按照uid_distinct_sample中的uid进行过滤,剩余13741995
+create table at_relation_1_ver as select * from at_relation where uida in (select uid from uid_distinct_sample);
+
+5. 对at_relation的uidb的边按照uid_distinct_sample中的uid进行过滤,剩余10678239
+create table at_relation_2_ver as select * from at_relation_1_ver where uidb in (select uid from uid_distinct_sample);
 
 
 ----------------------将带标签用户分为训练集和测试集--------------------------------
@@ -205,6 +211,10 @@ insert overwrite directory '/user/bd/uid_tag_sample' row format delimited fields
 
   create table uid_tags_tag_num_row_num_top40 as select uid,tags,tag,num,rank from (select uid, tags, tag,num, row_number() over ( partition by uid order by num desc) as rank from uid_tags_uid2List_tag_num ) t where rank < 41;
 
+  create table uid_tags_tag_num_row_num_top50 as select uid,tags,tag,num,rank from (select uid, tags, tag,num, row_number() over ( partition by uid order by num desc) as rank from uid_tags_uid2List_tag_num ) t where rank < 51;
+
+  create table uid_tags_tag_num_row_num_top100 as select uid,tags,tag,num,rank from (select uid, tags, tag,num, row_number() over ( partition by uid order by num desc) as rank from uid_tags_uid2List_tag_num ) t where rank < 101;
+
 
 10.将top5的结果列转行生成ground_truth_5（不存在并列组号）
   create table uid_tags_predicTags_top5_row  as select uid,tags,collect_set(tag) as predictList from uid_tags_tag_num_row_num_top5 group by uid,tags; 
@@ -214,6 +224,12 @@ insert overwrite directory '/user/bd/uid_tag_sample' row format delimited fields
   create table uid_tags_predicTags_top20_row  as select uid,tags,collect_set(tag) as predictList from uid_tags_tag_num_row_num_top20 group by uid,tags; 
 
   create table uid_tags_predicTags_top40_row  as select uid,tags,collect_set(tag) as predictList from uid_tags_tag_num_row_num_top40 group by uid,tags; 
+
+  create table uid_tags_predicTags_top50_row  as select uid,tags,collect_set(tag) as predictList from uid_tags_tag_num_row_num_top50 group by uid,tags; 
+
+   create table uid_tags_predicTags_top100_row  as select uid,tags,collect_set(tag) as predictList from uid_tags_tag_num_row_num_top100 group by uid,tags; 
+
+
 
 11.将uid_tags_predicTags_top5_row结果输出(12.74%)
 insert overwrite directory '/user/bd/uid_tags_predicTags_top5' row format delimited fields terminated by '\t' COLLECTION ITEMS TERMINATED BY ' ' select * from uid_tags_predicTags_top5_row;
@@ -227,11 +243,19 @@ insert overwrite directory '/user/bd/uid_tags_predicTags_top20' row format delim
 将uid_tags_predicTags_top40_row结果输出(18.89%)
 insert overwrite directory '/user/bd/uid_tags_predicTags_top40' row format delimited fields terminated by '\t' COLLECTION ITEMS TERMINATED BY ' ' select * from uid_tags_predicTags_top40_row;
 
+将uid_tags_predicTags_top50_row结果输出(map:19.14% mrr:39.82% p@50:6.56%)
+insert overwrite directory '/user/bd/uid_tags_predicTags_top50' row format delimited fields terminated by '\t' COLLECTION ITEMS TERMINATED BY ' ' select * from uid_tags_predicTags_top50_row;
+
+将uid_tags_predicTags_top100_row结果输出(map:19.64% mrr:39.86% p@100:4.55%)
+insert overwrite directory '/user/bd/uid_tags_predicTags_top100' row format delimited fields terminated by '\t' COLLECTION ITEMS TERMINATED BY ' ' select * from uid_tags_predicTags_top100_row;
+
 ---------------计算pte的准确率(除去5W测试数据外都是训练数据)----------------------
 1.判断测试集uid_tags_test_set中是否所有用户都在uid_distinct_sample表中
 select count(*) from uid_tags_test_set where uid not in (select uid from uid_distinct_sample);
 由于结果为0，所以表明测试集中的所有用户均可用pte方法进行预测
 2.uid_tags_predicTags_top5_pte.txt的准确率为0.14%
+
+通过实验结果可以看出，由于异构用户标签网络的训练方法需要在所有标签集合中寻找与用户相似的标签，所以准确率不高。但是尝试结合基于用户关系预测用户标签的算法和有向异构用户标签网络嵌入式表示调节式算法的结合算法，在准确率上较baseline提升22.9%。
 
 
 
@@ -249,12 +273,35 @@ create table tag_num_20 as select tag,num from tag_num where num > 20;
 create table tag_num_15 as select tag,num from tag_num where num > 15;
   选出词频大于10的tag作为备选tag,共29103.
 create table tag_num_10 as select tag,num from tag_num where num > 10;
+  选出词频大于50的tag作为备选tag,共6541.
+create table tag_num_50 as select tag,num from tag_num where num > 50;
+  选出词频大于100的tag作为备选tag,共3272.
+create table tag_num_100 as select tag,num from tag_num where num > 100;
 
 3.按照tag_num_20对uid_tag_sample进行清洗,并导出。
 
 create table uid_tag_sample_20 as select uid,tag,1 weight from uid_tag_sample where tag in (select tag from tag_num_20);
 
 insert overwrite directory '/user/bd/uid_tag_sample_20' row format delimited fields terminated by '\t' select * from uid_tag_sample_20 where trim(tag)!="";
+
+4.按照tag_num_10对uid_tag_sample进行清洗,并导出。
+
+create table uid_tag_sample_10 as select uid,tag,1 weight from uid_tag_sample where tag in (select tag from tag_num_10);
+
+insert overwrite directory '/user/bd/uid_tag_sample_10' row format delimited fields terminated by '\t' select * from uid_tag_sample_10 where trim(tag)!="";
+
+5.按照tag_num_50对uid_tag_sample进行清洗,并导出。
+
+create table uid_tag_sample_50 as select uid,tag,1 weight from uid_tag_sample where tag in (select tag from tag_num_50);
+
+insert overwrite directory '/user/bd/uid_tag_sample_50' row format delimited fields terminated by '\t' select * from uid_tag_sample_50 where trim(tag)!="";
+
+6.按照tag_num_100对uid_tag_sample进行清洗,并导出。
+
+create table uid_tag_sample_100 as select uid,tag,1 weight from uid_tag_sample where tag in (select tag from tag_num_100);
+
+insert overwrite directory '/user/bd/uid_tag_sample_100' row format delimited fields terminated by '\t' select * from uid_tag_sample_100 where trim(tag)!="";
+
 
 
 4.迭代次数100000M:top5:7.4258295E-4
@@ -321,10 +368,41 @@ top20:0.01589209
 top40:0.018974675
 
 5.负采样算法优化后+tag权重都是1+过滤词频低于20的tag+100+50+tune-undirect
-top5:0.008831244
+top5:0.0055589397
+top10:0.0068503385
+top20:0.00784117
+top40:0.008632835
 
 6.负采样算法优化后+tag权重都是1+过滤词频低于20的tag+100+50+joint
 top5:7.9741137E-4
+
+6.负采样算法优化后+tag权重都是1+过滤词频低于20的tag+100+50+joint-undirect
+top5:0.010385786
+top10:0.012104012
+top20:0.0133370785
+top40:0.014309617
+------------------------通过上面对比-----------------------------
+认为pte-tune方法结果好些，然后调整参数
+1.负采样算法优化后+tag权重都是1+过滤词频低于20的tag+100+100+tune
+
+
+-----------------------Combine算法设计---------------------------
+1.找到基于协同过滤所有备选词
+
+create table uid_tags_cf_tags as select uid,tags,concat_ws(',',collect_set(tag)) as cf_tags from uid_tags_uid2_tag group by uid,tags;
+
+2.找到备选集合中词语的词向量，如何存储？
+
+gcc -lm -pthread -Ofast -march=native -Wall -funroll-loops -ffast-math -Wno-unused-result conbine_find_sim.c -o CombineFindSim
+
+./CombineFindSim ../data/user_vec_1st_pte_tune.txt ../data/tag_vec_1st_pte_tune.txt uid_tags_predicTags_top100.txt combine.txt 100
+
+
+
+
+
+
+
 
 
 

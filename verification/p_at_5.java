@@ -14,12 +14,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 类map的实现描述：TODO 类实现描述
+ * 类p_at_5的实现描述：TODO 类实现描述
  *
- * @author leidan.ll 2017/3/16 下午8:22
+ * @author leidan.ll 2017/4/29 上午12:20
  */
-public class map {
-
+public class p_at_5 {
     public static void main(String[] args) {
 
         List<String> fact = new ArrayList<>(10);
@@ -28,14 +27,12 @@ public class map {
         String predStr = "";
         int matchNum = 0;
         int userNum = 0;
-        float precision = 0L;
         float totalPrecision = 0L;
         try {
             StringBuffer sb = new StringBuffer("");
-            FileReader reader = new FileReader("/Users/extends_die/code/weibo_user_profile/verification/mean_average_precision/src/uid_tags_predicTags_freq_pte_10.txt");
+            FileReader reader = new FileReader("/Users/extends_die/code/weibo_user_profile/verification/mean_average_precision/src/combine.txt");
             BufferedReader br = new BufferedReader(reader);
             String str = null;
-
             while ((str = br.readLine()) != null) {
                 userNum += 1;
                 factStr = str.split("\\t")[1].trim();
@@ -44,24 +41,20 @@ public class map {
                 String[] factArray = factStr.split(" ");
                 String[] predArray = predStr.split(" ");
                 matchNum = 0;
-                precision = 0L;
-
 
                 for (int i = 0; i < predArray.length; i++) { //音乐 体育 法国 健身 英国 美国 哲学
 
                     for (int j = 0; j < factArray.length; j++) {//音乐 体育 健身 哲学
-                        if (factArray[j].contains(predArray[i])) {
+                        if (factArray[j].contains(predArray[i])||predArray[i].contains(factArray[j])) {
                             matchNum += 1;
-                            precision += matchNum / (i + 1.0);
                             break;
                         }
                     }
                 }
-                totalPrecision += precision / factArray.length;
+                totalPrecision += matchNum/(predArray.length + 0.0);
             }
-            float map = totalPrecision / userNum;
-            System.out.println(map);
-
+            float p_at_5 = totalPrecision / userNum;
+            System.out.println(p_at_5);
         } catch (FileNotFoundException e) {
             e.printStackTrace();
         } catch (IOException e) {
